@@ -1,15 +1,26 @@
-use std::fs::File;
 extern crate teleinfo_nom;
+extern crate serialport;
 
 pub struct TeleinfoCachedPower {
     power: i32,
-    new: bool,
+    refreshed: bool,
+    changed: bool,
 }
 
 impl TeleinfoCachedPower {
     pub fn set(&mut self, power: i32) {
+        self.refreshed = true;
+        if self.power != power {
+            self.changed = true;
+        }
         self.power = power;
-        self.new = true;
+    }
+    pub fn new() -> TeleinfoCachedPower {
+        TeleinfoCachedPower {
+            power: 0,
+            refreshed: false,
+            changed: false,
+        }
     }
 }
 
@@ -27,41 +38,37 @@ impl TeleinfoCache {
     }
     pub fn new() -> TeleinfoCache {
         TeleinfoCache { 
-            inst_power: TeleinfoCachedPower {
-                power: 0,
-                new: false,
-            },
-            max_power: TeleinfoCachedPower {
-                power: 0,
-                new: false
-            },
+            inst_power: TeleinfoCachedPower::new(),
+            max_power: TeleinfoCachedPower::new(),
         }
     }
 }
 
 fn main() {
     let mut tic_cache = TeleinfoCache::new();
-    // Could be a serial port with serialport crate
-    let mut stream = File::open("stream_standard_complete.txt").unwrap();
-    //let remain;
+    let ports = serialport::available_ports().expect("No ports found!");
+    for p in ports {
+        println!("{}", p.port_name);
+    }
+    let serial_port_name = "/dev/ttyvirtual0";
+    let port_builder = serialport::new(serial_port_name, 9600);
+    let mut stream = port_builder.open().expect(format!("Failed to open port {}", serial_port_name).as_str());
+    //let mut stream = File::open("stream_standard_complete.txt").unwrap(); // Test version using a local serial dump (needs use std::fs::File; at top)
     //let msg;
     //let parse_done=false;
-    //while ()
-    let (_remain, msg1) = teleinfo_nom::get_message(&mut stream, "".to_string()).unwrap();
-    let current_indices = msg1.get_billing_indices();
-    let current_values = msg1.get_values(current_indices);
-    for (index,value) in current_values.into_iter() {
-        match value {
-            Some(val) => println!("store {}: {} in database", index, val),
-            None => (),
+    let mut remain = "".to_string();
+    loop {
+        let msg1;
+        (remain, msg1) = teleinfo_nom::get_message(&mut stream, remain).unwrap();
+        if let Some(power) = msg1.get_value("SINSTS".to_string()) {
+            match power.value.parse::<i32>() {
+                Ok(power) => {
+                    tic_cache.set_inst_power(power);
+                    println!("SINSTS={}W", power);
+                },
+                Err(e) => { println!("While parsing SINST: {}", e) },
+            };
         }
-    }
-    if let Some(power) = msg1.get_value("SINSTS".to_string()) {
-        match power.value.parse::<i32>() {
-            Ok(power) => tic_cache.set_inst_power(power),
-            Err(_e) => { /* Parse errors (SINSTS does not convert to i32) are ignored */},
-        };
-        println!("SINSTS={}!", power.value);
     }
     //let (remain, msg2) = teleinfo_nom::get_message(&mut stream, remain).unwrap()
 }
