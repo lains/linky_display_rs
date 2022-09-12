@@ -1,5 +1,6 @@
 extern crate teleinfo_nom;
 extern crate serialport;
+use chrono::{DateTime, Local};
 
 pub struct TeleinfoCachedPower {
     power: i32,
@@ -63,8 +64,9 @@ fn main() {
         if let Some(power) = msg1.get_value("SINSTS".to_string()) {
             match power.value.parse::<i32>() {
                 Ok(power) => {
+                    let now: DateTime<Local> = Local::now();
                     tic_cache.set_inst_power(power);
-                    println!("SINSTS={}W", power);
+                    println!("At {}, SINSTS={}W", now.format("%H:%M:%S"), power);
                 },
                 Err(e) => { println!("While parsing SINST: {}", e) },
             };
