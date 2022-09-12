@@ -67,21 +67,37 @@ fn main() {
             if incoming_buf_sz <= 1024 { /* FIXME: 1024 is adapted to standard TIC, not legacy one */
                 let delay_bytes = 1024 - incoming_buf_sz;
                 let delay_ms = (1000 * u64::from(delay_bytes)) / (9600 / 8);   /* Roughly estimate how many ms to wait for in order to fill-in a total of 128 bytes */
-                println!("Waiting {}ms", delay_ms);
+                /* Worst case scenario here is (1000 * 1024) / (9600 / 8) = 853ms, which is below the refresh period of standard TIC frames from the Linky meter */
                 thread::sleep(time::Duration::from_millis(delay_ms));
             }
         }
         let msg1;
-        (remain, msg1) = teleinfo_nom::get_message(&mut stream, remain).unwrap();
-        if let Some(power) = msg1.get_value("SINSTS".to_string()) {
-            match power.value.parse::<i32>() {
-                Ok(power) => {
-                    let now: DateTime<Local> = Local::now();
-                    tic_cache.set_inst_power(power);
-                    println!("At {}, SINSTS={}W", now.format("%H:%M:%S"), power);
-                },
-                Err(e) => { println!("While parsing SINST: {}", e) },
-            };
+        let mut tic_ts: Option<DateTime<Local>> = None;
+        if let Ok(tic_frame) = teleinfo_nom::get_message(&mut stream, remain) {
+           (remain, msg1) = tic_frame;
+            if let Some(timestamp) = msg1.get_value("DATE".to_string()) {
+                if let Some(horodate) = &timestamp.horodate {
+                    if horodate.season >= 'A' && horodate.season <= 'Z' {   /* Uppercase values mean clock is synchronized */
+                        tic_ts = Some(horodate.date);
+                    }
+                }
+            }
+            if let Some(power) = msg1.get_value("SINSTS".to_string()) {
+                match power.value.parse::<i32>() {
+                    Ok(power) => {
+                        tic_cache.set_inst_power(power);
+                        let ts: DateTime<Local> = match tic_ts {
+                            Some(tic_ts) => tic_ts, /* We prefer timestamps extracted from the TIC data */
+                            None => Local::now(),   /* But if there is none, we will use the received timestamp instead */
+                        };
+                        println!("At {}, SINSTS={}W", ts.format("%H:%M:%S"), power);
+                    },
+                    Err(e) => { println!("While parsing SINST: {}", e) },
+                };
+            }
+        }
+        else {
+            remain = "".to_string();
         }
     }
 }
